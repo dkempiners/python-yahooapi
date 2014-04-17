@@ -36,15 +36,15 @@ class YahooAPI:
         if tokenfile is not None:
             try:
                 f = open(tokenfile, "r")
-                self.saved_key = pickle.load(f)
+                self.saved_token = pickle.load(f)
                 f.close()
             except IOError:
-                self.saved_key = None
+                self.saved_token = None
 
-        if (self.saved_key is not None and
-                self.saved_key["access_token"] and
-                self.saved_key["access_token_secret"] and
-                self.saved_key["session_handle"]):
+        if (self.saved_token is not None and
+                self.saved_token["access_token"] and
+                self.saved_token["access_token_secret"] and
+                self.saved_token["session_handle"]):
 
             # refresh access token, it may not have expired yet but refresh
             # anyway
@@ -67,34 +67,34 @@ class YahooAPI:
 
             parsed_access_token = parse_utf8_qsl(raw_access.content)
 
-            self.saved_key = {}
-            self.saved_key["access_token"] = parsed_access_token["oauth_token"]
-            self.saved_key["access_token_secret"] = \
+            self.saved_token = {}
+            self.saved_token["access_token"] = parsed_access_token["oauth_token"]
+            self.saved_token["access_token_secret"] = \
                     parsed_access_token["oauth_token_secret"]
-            self.saved_key["session_handle"] = \
+            self.saved_token["session_handle"] = \
                     parsed_access_token["oauth_session_handle"]
 
             if tokenfile is not None:
                 try:
                     f = open(tokenfile, "w")
-                    pickle.dump(self.saved_key, f)
+                    pickle.dump(self.saved_token, f)
                     f.close()
                 except IOError:
                     pass
 
             self.session = self.oauth.get_session(
-                                (self.saved_key["access_token"],
-                                 self.saved_key["access_token_secret"]))
+                                (self.saved_token["access_token"],
+                                 self.saved_token["access_token_secret"]))
 
     def refresh_access_token(self):
         self.access_token_time = time.time()
 
         (access_token, access_token_secret) = \
                     self.oauth.get_access_token(
-                            self.saved_key["access_token"],
-                            self.saved_key["access_token_secret"],
+                            self.saved_token["access_token"],
+                            self.saved_token["access_token_secret"],
                             params={"oauth_session_handle":
-                                    self.saved_key["session_handle"]})
+                                    self.saved_token["session_handle"]})
 
         self.session = self.oauth.get_session(
                     (access_token, access_token_secret))
