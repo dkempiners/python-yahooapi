@@ -61,12 +61,13 @@ class YahooAPI:
 
             self.access_token_time = time.time()
 
-            raw_access = yahooapi.get_raw_access_token(
+            raw_access = self.oauth.get_raw_access_token(
                                 request_token, request_token_secret,
                                 params={"oauth_verifier": verification_code})
 
             parsed_access_token = parse_utf8_qsl(raw_access.content)
 
+            self.saved_key = {}
             self.saved_key["access_token"] = parsed_access_token["oauth_token"]
             self.saved_key["access_token_secret"] = \
                     parsed_access_token["oauth_token_secret"]
