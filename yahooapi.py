@@ -12,6 +12,8 @@ class YahooAPI:
 
     def __init__(self, keyfile, tokenfile=None):
 
+        self.saved_token = None
+
         # read in consumer key and consumer secret key from file
         f = open(keyfile, "r")
         keys = f.read().split()
