@@ -104,12 +104,13 @@ class YahooAPI:
     def request(self, request_str):
         now = time.time()
         tdiff = max(0, now - self.last_request)
+        if tdiff >= 0 and tdiff < self.request_period:
+            time.sleep(self.request_period - tdiff)
+
+        now = time.time()
         self.last_request = now
-        if tdiff > 0 and tdiff < self.request_period:
-            time.sleep(tdiff)
 
         # check if our access token has expired
-        now = time.time()
         tdiff = max(0, now - self.access_token_time)
 
         # refresh 60 seconds before it expires
