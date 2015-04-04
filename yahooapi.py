@@ -101,7 +101,13 @@ class YahooAPI:
         self.session = self.oauth.get_session(
                     (access_token, access_token_secret))
 
-    def request(self, request_str):
+    def request(self, request_str, params={}):
+        """get json instead of xml like this params={'format': 'json'}
+        requst_str should have protocol (ie http://)
+        Note that https doesn't work because yahoo requires SNI.
+        Python 3 supports it.
+        Python 2 -  https://stackoverflow.com/questions/18578439/using-requests-with-tls-doesnt-give-sni-support/18579484#18579484
+        """
         now = time.time()
         tdiff = max(0, now - self.last_request)
         if tdiff >= 0 and tdiff < self.request_period:
@@ -117,4 +123,4 @@ class YahooAPI:
         if tdiff > self.access_token_lifetime - 60:
             self.refresh_access_token()
 
-        return self.session.get(request_str)
+        return self.session.get(url=request_str, params=params)
