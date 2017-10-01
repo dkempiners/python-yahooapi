@@ -1,126 +1,139 @@
-from rauth import OAuth1Service
-from rauth.utils import parse_utf8_qsl
-import pickle
+import os
 import time
 
-class YahooAPI:
-    # access token lifetime in seconds
-    access_token_lifetime = 3600
+from rauth import OAuth2Service
 
-    # one request every X seconds to try to prevent 999 error codes
-    request_period = 2
 
-    def __init__(self, keyfile, tokenfile=None):
+class ClientKey(object):
+    def __init__(self, client_id, client_secret):
+        self.client_id = client_id
+        self.client_secret = client_secret
 
-        self.saved_token = None
-
-        # read in consumer key and consumer secret key from file
-        f = open(keyfile, "r")
-        keys = f.read().split()
-        f.close()
+    @classmethod
+    def from_file(cls, key_file):
+        with open(key_file, "r") as f:
+            keys = f.read().splitlines()
 
         if len(keys) != 2:
-            raise RuntimeError('Incorrect number of keys found in ' + keyfile)
+            raise RuntimeError("Incorrect number of keys found")
 
-        consumer_key, consumer_secret = keys
+        return cls(*keys)
 
-        self.oauth = OAuth1Service(
-            consumer_key = consumer_key,
-            consumer_secret = consumer_secret,
-            name = "yahoo",
-            request_token_url = "https://api.login.yahoo.com/oauth/v2/get_request_token",
-            access_token_url = "https://api.login.yahoo.com/oauth/v2/get_token",
-            authorize_url = "https://api.login.yahoo.com/oauth/v2/request_auth",
-            base_url = "http://fantasysports.yahooapis.com/")
+
+class Token(object):
+    def __init__(self, access_token=None, refresh_token=None):
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.expiration_time = 0
+
+    @property
+    def expires_in(self):
+        return self.expiration_time - time.time()
+
+    @property
+    def is_expired(self):
+        return self.expires_in <= 0
+
+    def get(self, oauth_service):
+        if self.refresh_token:
+            data = {
+                "refresh_token": self.refresh_token,
+                "redirect_uri": "oob",
+                "grant_type": "refresh_token",
+            }
+        else:
+            data = {
+                "code": self._get_code(oauth_service),
+                "redirect_uri": "oob",
+                "grant_type": "authorization_code",
+            }
+
+        self._get_token(oauth_service, data)
+
+    def _get_code(self, oauth_service):
+        params = {
+            "redirect_uri": "oob",
+            "response_type": "code",
+        }
+        authorize_url = oauth_service.get_authorize_url(**params)
+
+        print "Sign in here: " + str(authorize_url)
+        return raw_input("Enter code: ")
+
+    def _get_token(self, oauth_service, data):
+        raw_token = oauth_service.get_raw_access_token(data=data)
+
+        parsed_token = raw_token.json()
+        self.access_token = parsed_token["access_token"]
+        self.refresh_token = parsed_token["refresh_token"]
+        self.expiration_time = time.time() + parsed_token["expires_in"]
+
+    @classmethod
+    def from_file(cls, token_file):
+        with open(token_file, "r") as f:
+            token = f.read().strip()
+
+        if len(token.splitlines()) != 1:
+            raise RuntimeError("Incorrect token format")
+
+        return cls(refresh_token=token)
+
+    def save(self, token_file):
+        with open(token_file, "w") as f:
+            f.write(self.refresh_token)
+
+
+class YahooAPI(object):
+    def __init__(self, keyfile, tokenfile=None,
+                 base_url="https://fantasysports.yahooapis.com",
+                 request_period=0):
+
+        self.key = ClientKey.from_file(keyfile)
+
+        self.tokenfile = tokenfile
+        if self.tokenfile and os.path.exists(self.tokenfile):
+            self.token = Token.from_file(self.tokenfile)
+        else:
+            self.token = Token()
+
+        self.oauth = OAuth2Service(
+            client_id=self.key.client_id,
+            client_secret=self.key.client_secret,
+            name="yahoo",
+            authorize_url="https://api.login.yahoo.com/oauth2/request_auth",
+            access_token_url="https://api.login.yahoo.com/oauth2/get_token",
+            base_url=base_url,
+        )
+
+        self.session = None
+
+        self._update_token()
+
+        self.session = self.oauth.get_session(self.token.access_token)
 
         self.last_request = time.time()
+        self.request_period = request_period
 
-        if tokenfile is not None:
-            try:
-                f = open(tokenfile, "r")
-                self.saved_token = pickle.load(f)
-                f.close()
-            except IOError:
-                self.saved_token = None
+    def _update_token(self):
+        self.token.get(self.oauth)
 
-        if (self.saved_token is not None and
-                self.saved_token["access_token"] and
-                self.saved_token["access_token_secret"] and
-                self.saved_token["session_handle"]):
+        if self.tokenfile:
+            self.token.save(self.tokenfile)
 
-            # refresh access token, it may not have expired yet but refresh
-            # anyway
-            self.refresh_access_token()
-
-        else:
-            request_token, request_token_secret = \
-                self.oauth.get_request_token(params={"oauth_callback": "oob"})
-
-            authorize_url = self.oauth.get_authorize_url(request_token)
-
-            print "Sign in here: " + str(authorize_url)
-            verification_code = raw_input("Enter code: ")
-
-            self.access_token_time = time.time()
-
-            raw_access = self.oauth.get_raw_access_token(
-                                request_token, request_token_secret,
-                                params={"oauth_verifier": verification_code})
-
-            parsed_access_token = parse_utf8_qsl(raw_access.content)
-
-            self.saved_token = {}
-            self.saved_token["access_token"] = parsed_access_token["oauth_token"]
-            self.saved_token["access_token_secret"] = \
-                    parsed_access_token["oauth_token_secret"]
-            self.saved_token["session_handle"] = \
-                    parsed_access_token["oauth_session_handle"]
-
-            if tokenfile is not None:
-                try:
-                    f = open(tokenfile, "w")
-                    pickle.dump(self.saved_token, f)
-                    f.close()
-                except IOError:
-                    pass
-
-            self.session = self.oauth.get_session(
-                                (self.saved_token["access_token"],
-                                 self.saved_token["access_token_secret"]))
-
-    def refresh_access_token(self):
-        self.access_token_time = time.time()
-
-        (access_token, access_token_secret) = \
-                    self.oauth.get_access_token(
-                            self.saved_token["access_token"],
-                            self.saved_token["access_token_secret"],
-                            params={"oauth_session_handle":
-                                    self.saved_token["session_handle"]})
-
-        self.session = self.oauth.get_session(
-                    (access_token, access_token_secret))
+        if self.session:
+            self.session.access_token = self.token.access_token
 
     def request(self, request_str, params={}):
-        """get json instead of xml like this params={'format': 'json'}
-        requst_str should have protocol (ie http://)
-        Note that https doesn't work because yahoo requires SNI.
-        Python 3 supports it.
-        Python 2 -  https://stackoverflow.com/questions/18578439/using-requests-with-tls-doesnt-give-sni-support/18579484#18579484
-        """
-        now = time.time()
-        tdiff = max(0, now - self.last_request)
+        """get json instead of xml like this params={'format': 'json'}"""
+
+        tdiff = max(0, time.time() - self.last_request)
         if tdiff >= 0 and tdiff < self.request_period:
             time.sleep(self.request_period - tdiff)
 
-        now = time.time()
-        self.last_request = now
+        self.last_request = time.time()
 
-        # check if our access token has expired
-        tdiff = max(0, now - self.access_token_time)
-
-        # refresh 60 seconds before it expires
-        if tdiff > self.access_token_lifetime - 60:
-            self.refresh_access_token()
+        # refresh access token 60 seconds before it expires
+        if self.token.expires_in < 60:
+            self._update_token()
 
         return self.session.get(url=request_str, params=params)
